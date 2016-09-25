@@ -18,7 +18,7 @@ Defines
 *******************************************************************************/
 #define WHITE RGBA8(255, 255, 255, 255)
 #define BLACK RGBA8(0, 0, 0, 255)
-#define GREEN RGBA8(0,255,0,255)
+#define GREEN RGBA8(0,186,6,255)
 
 #define PSVITA_SCREEN_WIDTH 960
 #define PSVITA_SCREEN_HEIGHT 544
@@ -57,10 +57,24 @@ Function prototypes
 
 void setUpTouchScreen();
 Tile_t createNewTile(int xPos, int yPos, int width, int height, unsigned int colour);
+SceTouchData pollTouchedTiles(Tile_t* tileArray, int tileArrayLengths);
 void drawBorder(Tile_t tile);
 void drawTiles(Tile_t tiles[], int tileLength);
 void drawText(vita2d_pgf *font, int x, int y,unsigned int color, float scale,const char *text);
 
+/*******************************************************************************
+Notes
+*******************************************************************************/
+/*---Touch Notes
+ *For some reason the touch data is twice that of what is drawn.
+ *For this reason we have to test half rather than directly.
+ *
+ *beingTouched is almost never able to be printed out as it is always 0
+ *use Touched instead.
+ *
+ *There's no way to clear the values of touch when there is no touch happening
+ *so all i do is compare to the old value to see if it's changed
+ */
 
 /*******************************************************************************
 main
@@ -83,14 +97,13 @@ int main(int argc, char *argv[])
 	//Tile notes:
 	//12 Tiles total onscreen:
 	//4 Horizontal, 3 Vertial
+	srand(time(NULL));
 	int blackTile = rand() % (4 + 1 - 0) + 0;
 	int tileArrayLength = 0;
 	Tile_t tileArray[16]; 
 	float i;
 	for (i=0.0;i<4;i++)
-	{
-		srand(time(NULL));
-		rand() % (4 + 1 - 0) + 0;		
+	{		
 		float x = (i/4) * PSVITA_SCREEN_WIDTH;
 		float y = (2/3) * PSVITA_SCREEN_HEIGHT;
 		//lat arg check if this is the black tile and sets if it is.
@@ -103,62 +116,32 @@ int main(int argc, char *argv[])
 	tileArrayLength = 4;
 	
 	
-	memset(&pad, 0, sizeof(pad));
+	memset(&pad, 0, sizeof(pad)); // Control pad buttons
 	
-	SceTouchData touch_old[SCE_TOUCH_PORT_MAX_NUM];
-	SceTouchData touch[SCE_TOUCH_PORT_MAX_NUM];
+	//Touch data
+	SceTouchData touchOld;
+	SceTouchData touch;
+	
 	while (1)
 	{
 		/*Exit when start is pressed*/
 		sceCtrlPeekBufferPositive(0, &pad, 1);
 		if (pad.buttons & SCE_CTRL_START)
 			break;
-		//Right button
-		if (pad.buttons & SCE_CTRL_RIGHT)
-		{
-			//increase width of tiles
-			int i;
-			for (i = 0;i < tileArrayLength;i++)
-			{
-				tileArray[i].position.x += 10.00;
-			}
-		}
-		//left button
-		if (pad.buttons & SCE_CTRL_LEFT)
-		{
-			//increase width of tiles
-			int i;
-			for (i = 0;i < tileArrayLength;i++)
-			{
-				tileArray[i].position.x -= 10.00;
-			}
-		}
-		
-		//Right button
-		if (pad.buttons & SCE_CTRL_UP)
-		{
-			//increase width of tiles
-			int i;
-			for (i = 0;i < tileArrayLength;i++)
-			{
-				tileArray[i].position.y -= 10.00;
-			}
-		}
-		//left button
-		if (pad.buttons & SCE_CTRL_DOWN)
-		{
-			//increase width of tiles
-			int i;
-			for (i = 0;i < tileArrayLength;i++)
-			{
-				tileArray[i].position.y += 10.00;
-			}
-		}
 		
 		//R Trigger
 		if (pad.buttons & SCE_CTRL_RTRIGGER)
 		{
 			boolDebug = !boolDebug;
+		}
+		
+		if (pad.buttons & SCE_CTRL_LTRIGGER)
+		{
+			int i;
+			for (i = 0;i < tileArrayLength;i++)
+			{
+				tileArray[i].position.y += 1;
+			}
 		}
 			
 		vita2d_start_drawing();
@@ -171,6 +154,31 @@ int main(int argc, char *argv[])
 		drawTiles(tileArray, tileArrayLength);
 		
 		
+		/*touch code*/
+		
+		int i, port = SCE_TOUCH_PORT_FRONT;		
+		//samplefront surfaces
+		sceTouchPeek(port, &touch, 1);
+		//print every touch coordinates on that surface
+		for (i = 0; i < SCE_TOUCH_MAX_REPORT - 2; i++)
+		{
+			char strBuffer[50];
+			sprintf(strBuffer,"x:%4i, y:%-4i ",touch.report[i].x,touch.report[i].y);
+			drawText(pgf, 0, (i+1)*20, GREEN , 1.0f, strBuffer);
+		}
+		
+		touch = pollTouchedTiles(tileArray, tileArrayLength);
+		/*
+		if ( (touch[SCE_TOUCH_PORT_FRONT].reportNum == 1)
+		  && (touch_old[SCE_TOUCH_PORT_FRONT].reportNum == 1)
+		  && (touch[SCE_TOUCH_PORT_FRONT].report[0].y >= 1000)
+		  && (touch_old[SCE_TOUCH_PORT_FRONT].report[0].y < 1000))
+		break;
+		*/
+		
+		
+		
+		
 		/*-------------DEBUG INFO-----------------*/
 		if (boolDebug)
 		{
@@ -178,40 +186,11 @@ int main(int argc, char *argv[])
 			for (i = 0;i < tileArrayLength;i++)
 			{
 				char strBuffer[50];
-				sprintf(strBuffer, "Tile #%d is at position: (%f,%f)", i, tileArray[i].position.x,tileArray[i].position.y);
-				drawText(pgf, 400, (i+1)*20, GREEN , 1.0f, strBuffer);
-			}
-			
+				sprintf(strBuffer, "Tile #%d is at position: (%0.1f,%0.1f), touched? %d", i, tileArray[i].position.x,tileArray[i].position.y,tileArray[i].touched);
+				drawText(pgf, 200, (i+1)*20, GREEN , 1.0f, strBuffer);
+			}		
 			
 		}
-
-		
-
-		
-		
-		
-		
-		
-		/*touch code*/
-		/*
-		memcpy(touch_old, touch, sizeof(touch_old));
-		int port,i;		
-		//sample both back and front surfaces
-		for(port = 0; port < SCE_TOUCH_PORT_MAX_NUM; port++){
-			sceTouchPeek(port, &touch[port], 1);
-			//print every touch coordinates on that surface
-			for(i = 0; i < SCE_TOUCH_MAX_REPORT; i++)
-				printf("\e[9%im%4i:%-4i ", (i < touch[port].reportNum)? 7:0,
-				       touch[port].report[i].x,touch[port].report[i].y);
-			printf("\n");
-		}
-
-		if ( (touch[SCE_TOUCH_PORT_FRONT].reportNum == 1)
-		  && (touch_old[SCE_TOUCH_PORT_FRONT].reportNum == 1)
-		  && (touch[SCE_TOUCH_PORT_FRONT].report[0].y >= 1000)
-		  && (touch_old[SCE_TOUCH_PORT_FRONT].report[0].y < 1000))
-		break;
-		*/
 		
 		vita2d_end_drawing();
 		vita2d_swap_buffers();
@@ -234,9 +213,44 @@ void setUpTouchScreen()
 {
 	/* should use SCE_TOUCH_SAMPLING_STATE_START instead of 1 but old SDK have an invalid values */
 	sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, 1);
-	sceTouchSetSamplingState(SCE_TOUCH_PORT_BACK, 1);
 	sceTouchEnableTouchForce(SCE_TOUCH_PORT_FRONT);
-	sceTouchEnableTouchForce(SCE_TOUCH_PORT_BACK);
+}
+
+
+SceTouchData pollTouchedTiles(Tile_t* tileArray, int tileArrayLength)
+{
+	//i'm really really sorry for this, how else was i supposed to loop through 2 arrays and test 2 conditions!?!?!?
+	
+	SceTouchData touch;
+	sceTouchPeek(SCE_TOUCH_PORT_FRONT, &touch, 1);
+	int i,j;
+	Tile_t* tilep = tileArray;
+	for (i = 0;i < tileArrayLength;i++, tilep++)
+	{		
+		for (j = 0; j < SCE_TOUCH_MAX_REPORT - 2; j++) // - 2 is because SCE_TOUCH_MAX_REPORT is 8 while it should really be 6 
+		{
+			int touchX = touch.report[j].x / 2; //factor pixel changes, (refer to notes)
+			int touchY = touch.report[j].y / 2;
+			if (touchX >= tilep->position.x && touchX <= tilep->position.x + tilep->width)
+			{
+				if (touchY >= tilep->position.y && touchY <= tilep->position.y + tilep->height)
+				{
+					//touch inside tile 
+					tilep->beingTouched = 1;
+					tilep->touched = 1;
+				}
+				else
+				{
+					tilep->beingTouched = 0;
+				}
+			}
+			else
+			{
+				tilep->beingTouched = 0;
+			}
+		}
+	}
+	return touch;
 }
 
 Tile_t createNewTile(int xPos, int yPos, int width, int height, unsigned int colour)
@@ -247,7 +261,8 @@ Tile_t createNewTile(int xPos, int yPos, int width, int height, unsigned int col
 	tile.width = width;
 	tile.height = height;
 	tile.colour = colour;
-	
+	tile.beingTouched = 0;
+	tile.touched = 0;
 	return tile;
 }
 
