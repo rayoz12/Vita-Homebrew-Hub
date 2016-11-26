@@ -21,6 +21,7 @@ Defines
 #define BLACK RGBA8(0, 0, 0, 255)
 #define GREEN RGBA8(0,186,6,255)
 #define RED RGBA8(255,0,0,255)
+#define SKY_BLUE RGBA8(43, 144, 191, 255)
 /**********************     Object size defines   *****************************/
 /*for some reason the touch screen sizes are double*/
 #define PSVITA_TOUCH_WIDTH 1920
@@ -40,6 +41,9 @@ Defines
 /**********************   Physics Constants defines****************************/
 #define TIME 1/40
 #define GRAVITY 2
+
+/*************************   Collision defines     ****************************/
+#define PLATFORM_LANDING_SENSITIVITY 5 //The pixel gap at which collision with a platform is detected
 
 
 /*******************************************************************************
@@ -70,9 +74,9 @@ struct Player
 {
 	struct Position pos;
 	struct Position vel;
-    int width;
-    int height;
-    int mass;
+	int width;
+	int height;
+	int mass;
 	unsigned int colour;
 };
 
@@ -93,10 +97,11 @@ void handleTouch(Player_t *player, SceTouchData touch[]);
 void handlePhysics(Player_t *player);
 
 
-void handleCollisionChecking(Player_t, Platform_t playArray[], int platformLength);
-int boundedBoxCollisionCheck(int x1, int y1, int width1, int height1, 
-							 int x2, int y2, int width2, int width2);
+void handleCollisionChecking(Player_t *player, Platform_t platArray[], int platformLength);
+int isOnPlatform(int playerX, int playerY, int playerWidth, int playerHeight, 
+				 int platformX, int platformY, int platformWidth, int platformHeight);
 
+int testInRange(int numberToCheck, int bottom, int top);
 
 void drawPlayer(Player_t player);
 void drawPlatforms(Platform_t platforms[], int platformLength);
@@ -106,15 +111,32 @@ void drawText(vita2d_pgf *font, int x, int y,unsigned int color, float scale, co
 /*******************************************************************************
 Notes
 *******************************************************************************/
+/*---Display Notes
+ * The coodinate system from vita2dlib goes by (x=0,y=0) being at the top left
+ * x increases as you go right.
+ * y increases as you go down.
+ */
+ 
 /*---Touch Notes
  *For some reason the touch data is twice that of what is drawn.
  *For this reason we have to test half rather than directly.
- *
- *beingTouched is almost never able to be printed out as it is always 0
- *use Touched instead.
- *
- *There's no way to clear the values of touch when there is no touch happening
- *so all I do is compare to the old value to see if it's changed
+ */
+ 
+/*---Collision notes
+ * Check if the player is on top of a platform and give them a boost if they are
+ * Ignore other collisions so that the player can go through the platforms.
+ 
+ * collision can be done in this way:
+ * Check if player.pos.y + player.height <= platform.y
+ * check if atleast 1 pixel of the player lies above the platform width.
+ * if both conditions are true, then the player is above on the platform.
+ * 
+ * now we need to consider if the player has landed on the platform.
+ * most likely can be done by checking if the bottom of the player
+ * is in a gap above the platform. A 5 pixel gap would be good 
+ * 
+ * Action taken after this would usualy be to give the player a boost in
+ * velocity to get to the next platform.
  */
 
 /*******************************************************************************
@@ -172,6 +194,10 @@ int main(int argc, char *argv[])
 		{
 			player.vel.y -= 30;
 		}
+		if (pad.buttons & SCE_CTRL_DOWN)
+		{
+			player.vel.y += 30;
+		}
 			
 		vita2d_start_drawing();
 		vita2d_clear_screen();
@@ -187,6 +213,8 @@ int main(int argc, char *argv[])
 		int currentTop = 50;
 		
 		handleTouch(&player, touch);
+		
+		handleCollisionChecking(&player, platformArray, platformNum);
 		
 		handlePhysics(&player);
 		
@@ -248,6 +276,7 @@ void setUpTouchScreen()
 {
 	/* should use SCE_TOUCH_SAMPLING_STATE_START instead of 1 but old SDK have an invalid values */
 	sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, 1);
+	sceTouchSetSamplingState(SCE_TOUCH_PORT_BACK, 1);
 	sceTouchEnableTouchForce(SCE_TOUCH_PORT_FRONT);
 }
 
@@ -280,7 +309,7 @@ void generatePlatforms(Platform_t platforms[], int numPlat)
 		newPlat.width = PLATFORM_WIDTH;
 		newPlat.height = PLATFORM_HEIGHT;
 		newPlat.type = NORMAL;
-		newPlat.colour = BLACK;
+		newPlat.colour = SKY_BLUE;
 		platforms[(int)i] = newPlat;
 	}
 }
@@ -319,27 +348,42 @@ void handlePhysics(Player_t *player)
 	player->pos.y += player->vel.y * TIME;
 }
 
-void handleCollisionChecking(Player_t *player, Platform_t playArray[], int platformLength)
+void handleCollisionChecking(Player_t *player, Platform_t platArray[], int platformLength)
 {
 	int i;
 	for (i = 0;i < platformLength; i++)
 	{
-		int colliding = boundedBoxCollisionCheck(player->pos.x, player->pos.y, player->width, player->height,
-												platArray[i].pos.x, platArray[i].pos.y, platArray[i].width, platArray[i].height)
-		if (colliding)
+		int onPlatform = isOnPlatform(player->pos.x, player->pos.y, player->width, player->height,
+									  platArray[i].pos.x, platArray[i].pos.y, platArray[i].width, platArray[i].height);
+		if (onPlatform)
 		{
-			
+			player->vel.y -= 30;
 		}
 	}
 }
 
-int boundedBoxCollisionCheck(int x1, int y1, int width1, int height1, 
-							 int x2, int y2, int width2, int width2)
+int isOnPlatform(int playerX, int playerY, int playerWidth, int playerHeight, 
+				 int platformX, int platformY, int platformWidth, int platformHeight)
 {
-	return (x1 < x2 + width2 &&
-		   x1 + width1 > x2 &&
-		   y1 < y2 + height2 &&
-		   height1 + y1 > y2);
+	
+	if (playerY + playerHeight <= platformY)
+	{
+		//check if atleast one corner is on the platform
+		int cornerLeft = playerX;
+		int cornerRight = playerX + playerWidth;
+		//returns true if atleast one corner is on the platform.
+		if (testInRange(cornerLeft, platformX, platformX + platformWidth) ||
+			testInRange(cornerRight, platformX, platformX + platformWidth))
+		{
+			//now it is above we need to check if it is landed on the platform
+			return testInRange(playerY + playerHeight, platformY, platformY - PLATFORM_LANDING_SENSITIVITY);
+		}
+	}
+}
+
+int testInRange(int numberToCheck, int bottom, int top)
+{
+ 	return (numberToCheck >= bottom && numberToCheck <= top);
 }
 
 /*******************************************************************************
