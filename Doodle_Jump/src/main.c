@@ -21,7 +21,9 @@ Defines
 #define BLACK RGBA8(0, 0, 0, 255)
 #define GREEN RGBA8(0,186,6,255)
 #define RED RGBA8(255,0,0,255)
+
 #define SKY_BLUE RGBA8(43, 144, 191, 255)
+#define CLEARED_GREEN RGBA8(58, 178, 74, 255)
 /**********************     Object size defines   *****************************/
 /*for some reason the touch screen sizes are double*/
 #define PSVITA_TOUCH_WIDTH 1920
@@ -31,16 +33,16 @@ Defines
 #define PSVITA_SCREEN_HEIGHT 544
 
 #define PLATFORM_WIDTH 100
-#define PLATFORM_HEIGHT 10
+#define PLATFORM_HEIGHT 30
 
 #define PLAYER_WIDTH 50
 #define PLAYER_HEIGHT 80
 
-#define INITAL_PLAT_COUNT 10
+#define INITAL_PLAT_COUNT 8
 
 /**********************   Physics Constants defines****************************/
 #define TIME 1/40
-#define GRAVITY 2
+#define GRAVITY 4
 
 /*************************   Collision defines     ****************************/
 #define PLATFORM_LANDING_SENSITIVITY 5 //The pixel gap at which collision with a platform is detected
@@ -98,8 +100,8 @@ void handlePhysics(Player_t *player);
 
 
 void handleCollisionChecking(Player_t *player, Platform_t platArray[], int platformLength);
-int isOnPlatform(int playerX, int playerY, int playerWidth, int playerHeight, 
-				 int platformX, int platformY, int platformWidth, int platformHeight);
+int isOnPlatform(float playerX, float playerY, float playerWidth, float playerHeight, 
+				 float platformX, float platformY, float platformWidth, float platformHeight);
 
 int testInRange(int numberToCheck, int bottom, int top);
 
@@ -133,12 +135,19 @@ Notes
  * 
  * now we need to consider if the player has landed on the platform.
  * most likely can be done by checking if the bottom of the player
- * is in a gap above the platform. A 5 pixel gap would be good 
+ * is in a gap above the platform. A 5 pixel gap would be good. An issue with
+ * this is that if between frames the player moves through this gap but does not
+ * stop then no collision will occur. 
  * 
  * Action taken after this would usualy be to give the player a boost in
  * velocity to get to the next platform.
  */
 
+/*******************************************************************************
+Global variables - Sorry but it shouldn't really have an effect as they aren't
+used in logic anywhere
+*******************************************************************************/
+vita2d_pgf *pgf; //Mostly used to print debug text throught the code.
 /*******************************************************************************
 main
 *******************************************************************************/
@@ -146,7 +155,7 @@ main
 int main(int argc, char *argv[]) 
 {
 	SceCtrlData pad;
-	vita2d_pgf *pgf;
+	
 	
 	int boolDebug = 1;
 	
@@ -170,7 +179,7 @@ int main(int argc, char *argv[])
 	
 	Player_t player;
 	player.pos.x = (PSVITA_SCREEN_WIDTH/2) - PLAYER_WIDTH/2;
-	player.pos.y = 450;
+	player.pos.y = 400;
 	player.vel.x = 0;
 	player.vel.y = 0;
 	player.width = PLAYER_WIDTH;
@@ -357,28 +366,31 @@ void handleCollisionChecking(Player_t *player, Platform_t platArray[], int platf
 									  platArray[i].pos.x, platArray[i].pos.y, platArray[i].width, platArray[i].height);
 		if (onPlatform)
 		{
-			player->vel.y -= 30;
+			player->vel.y = -300; //Override any current velocity 
+			platArray[i].colour = CLEARED_GREEN;
+			char Out[256] = ""; 
+			sprintf(Out + strlen(Out),"Colliding with plat: %d", i);
+			drawText(pgf, 600, i*20, GREEN , 1.0f, Out);
 		}
 	}
 }
 
-int isOnPlatform(int playerX, int playerY, int playerWidth, int playerHeight, 
-				 int platformX, int platformY, int platformWidth, int platformHeight)
+int isOnPlatform(float playerX, float playerY, float playerWidth, float playerHeight, 
+				 float platformX, float platformY, float platformWidth, float platformHeight)
 {
+
+	//check if atleast one corner is on the platform
+	int cornerLeft = playerX;
+	int cornerRight = playerX + playerWidth;
+	//returns true if atleast one corner is on the platform.	
 	
-	if (playerY + playerHeight <= platformY)
+	if (testInRange(cornerLeft, platformX, platformX + platformWidth) ||
+		testInRange(cornerRight, platformX, platformX + platformWidth))
 	{
-		//check if atleast one corner is on the platform
-		int cornerLeft = playerX;
-		int cornerRight = playerX + playerWidth;
-		//returns true if atleast one corner is on the platform.
-		if (testInRange(cornerLeft, platformX, platformX + platformWidth) ||
-			testInRange(cornerRight, platformX, platformX + platformWidth))
-		{
-			//now it is above we need to check if it is landed on the platform
-			return testInRange(playerY + playerHeight, platformY, platformY - PLATFORM_LANDING_SENSITIVITY);
-		}
+		//now it is above we need to check if it is landed on the platform
+		return testInRange(playerY + playerHeight, platformY - PLATFORM_LANDING_SENSITIVITY, platformY + platformHeight);
 	}
+	
 }
 
 int testInRange(int numberToCheck, int bottom, int top)
