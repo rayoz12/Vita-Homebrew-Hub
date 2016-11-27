@@ -33,7 +33,7 @@ Defines
 #define PSVITA_SCREEN_HEIGHT 544
 
 #define PLATFORM_WIDTH 100
-#define PLATFORM_HEIGHT 30
+#define PLATFORM_HEIGHT 15
 
 #define PLAYER_WIDTH 50
 #define PLAYER_HEIGHT 80
@@ -42,7 +42,7 @@ Defines
 
 /**********************   Physics Constants defines****************************/
 #define TIME 1/40
-#define GRAVITY 4
+#define GRAVITY 7
 
 /*************************   Collision defines     ****************************/
 #define PLATFORM_LANDING_SENSITIVITY 5 //The pixel gap at which collision with a platform is detected
@@ -94,6 +94,7 @@ Function prototypes
 void setUpTouchScreen();
 
 void generatePlatforms(Platform_t platforms[], int numPlat);
+int appendPlatforms(Platform_t platforms[], int platformLength, int numPlat);
 
 void handleTouch(Player_t *player, SceTouchData touch[]);
 void handlePhysics(Player_t *player);
@@ -102,8 +103,10 @@ void handlePhysics(Player_t *player);
 void handleCollisionChecking(Player_t *player, Platform_t platArray[], int platformLength);
 int isOnPlatform(float playerX, float playerY, float playerWidth, float playerHeight, 
 				 float platformX, float platformY, float platformWidth, float platformHeight);
-
 int testInRange(int numberToCheck, int bottom, int top);
+				 
+int handlePlatformMovement(Player_t player, Platform_t platArray[], int platformLength);
+int removePlatform(int index, Platform_t platArray[], int platformLength);
 
 void drawPlayer(Player_t player);
 void drawPlatforms(Platform_t platforms[], int platformLength);
@@ -156,8 +159,11 @@ int main(int argc, char *argv[])
 {
 	SceCtrlData pad;
 	
+	int score = 0; //Score, more like the pixels the player has gone up by.
 	
 	int boolDebug = 1;
+	
+	int boolPaused = 0;
 	
 	int platformNum = INITAL_PLAT_COUNT;
 	
@@ -171,15 +177,15 @@ int main(int argc, char *argv[])
 	memset(&pad, 0, sizeof(pad)); // Control pad buttons
 	
 	//Touch data
-	SceTouchData touchOld[SCE_TOUCH_PORT_MAX_NUM];
 	SceTouchData touch[SCE_TOUCH_PORT_MAX_NUM];
+	setUpTouchScreen();
 	
-	Platform_t platformArray[INITAL_PLAT_COUNT];
+	Platform_t platformArray[32];
 	generatePlatforms(platformArray, platformNum);
 	
 	Player_t player;
 	player.pos.x = (PSVITA_SCREEN_WIDTH/2) - PLAYER_WIDTH/2;
-	player.pos.y = 400;
+	player.pos.y = 200;
 	player.vel.x = 0;
 	player.vel.y = 0;
 	player.width = PLAYER_WIDTH;
@@ -192,6 +198,9 @@ int main(int argc, char *argv[])
 		sceCtrlPeekBufferPositive(0, &pad, 1);
 		if (pad.buttons & SCE_CTRL_START)
 			break;
+			
+		if (boolPaused)
+			continue;
 		
 		//R Trigger
 		if (pad.buttons & SCE_CTRL_RTRIGGER)
@@ -199,10 +208,27 @@ int main(int argc, char *argv[])
 			boolDebug = !boolDebug;
 		}
 		
+		//L Trigger
+		if (pad.buttons & SCE_CTRL_LTRIGGER)
+		{
+			boolPaused = !boolPaused;
+		}
+		
+		//left and right controls
+		if (pad.buttons & SCE_CTRL_LEFT)
+		{
+			player.pos.x -= 3;
+		}
+		if (pad.buttons & SCE_CTRL_RIGHT)
+		{
+			player.pos.x += 3;
+		}
+		
 		if (pad.buttons & SCE_CTRL_UP)
 		{
 			player.vel.y -= 30;
 		}
+		
 		if (pad.buttons & SCE_CTRL_DOWN)
 		{
 			player.vel.y += 30;
@@ -210,7 +236,6 @@ int main(int argc, char *argv[])
 			
 		vita2d_start_drawing();
 		vita2d_clear_screen();
-		setUpTouchScreen();
 		
 		int port;
 		for(port = 0; port < SCE_TOUCH_PORT_MAX_NUM; port++)
@@ -222,10 +247,12 @@ int main(int argc, char *argv[])
 		int currentTop = 50;
 		
 		handleTouch(&player, touch);
-		
-		handleCollisionChecking(&player, platformArray, platformNum);
+
+		platformNum = handlePlatformMovement(player, platformArray, platformNum);
 		
 		handlePhysics(&player);
+		
+		handleCollisionChecking(&player, platformArray, platformNum);
 		
 		drawPlayer(player);
 		
@@ -250,7 +277,7 @@ int main(int argc, char *argv[])
 				sprintf(touchOutput + strlen(touchOutput),"\n");				
 				sprintf(touchOutput + strlen(touchOutput), "reportNum: %d \n", touch[port].reportNum);
 			}
-			
+			sprintf(platOutput + strlen(platOutput),"plat size: %d\n", platformNum);
 			for(j = 0;j < platformNum;j++)
 			{
 				sprintf(platOutput + strlen(platOutput), "plat %d: x: %0.2f, y: %0.2f \n", j, platformArray[j].pos.x, platformArray[j].pos.y);
@@ -280,7 +307,14 @@ int main(int argc, char *argv[])
 	sceKernelExitProcess(0);
 	return 0;
 }
-
+/*******************************************************************************
+setUpTouchScreen
+Sets up the touch screen to detect touch on the front and back panels
+inputs:
+- none
+outputs:
+- none
+*******************************************************************************/
 void setUpTouchScreen()
 {
 	/* should use SCE_TOUCH_SAMPLING_STATE_START instead of 1 but old SDK have an invalid values */
@@ -289,17 +323,34 @@ void setUpTouchScreen()
 	sceTouchEnableTouchForce(SCE_TOUCH_PORT_FRONT);
 }
 
-void drawPlayer(Player_t player)
-{
-	vita2d_draw_rectangle(player.pos.x, player.pos.y, player.width, player.height, player.colour);
-}
-
+/*******************************************************************************
+generatePlatforms
+This takes a platform array and inserts random platforms in it.
+inputs:
+- Platform_t platforms[] - The empty platforms array 
+- int numPlat - The number of platforms to generate
+outputs:
+- none
+*******************************************************************************/
 void generatePlatforms(Platform_t platforms[], int numPlat)
 {
+	//first tile must be special case so that the player can land on it
 	
 	float i;
 	for (i = 0.0 ;i < numPlat;i++)
 	{
+		if (i == 0.0)
+		{
+			Platform_t newPlat;
+			newPlat.pos.x = (PSVITA_SCREEN_WIDTH/2) - PLATFORM_WIDTH/2;
+			newPlat.pos.y = 400;
+			newPlat.width = PLATFORM_WIDTH;
+			newPlat.height = PLATFORM_HEIGHT;
+			newPlat.type = NORMAL;
+			newPlat.colour = SKY_BLUE;
+			platforms[(int)i] = newPlat;
+			continue;
+		}
 		
 /*		if ((int)i % 4 == 0)*/
 /*	    {*/
@@ -322,9 +373,42 @@ void generatePlatforms(Platform_t platforms[], int numPlat)
 		platforms[(int)i] = newPlat;
 	}
 }
+ //returns new length
+int appendPlatforms(Platform_t platforms[], int platformLength, int numPlat)
+{
+	int total = platformLength + numPlat;
+	float i;
+	for (i = platformLength ;i < total;i++)
+	{	
+		float row = floor(i/10.0);
+		float x = rand() % PSVITA_SCREEN_WIDTH;
+		float y = row - ((i/10.0) * PSVITA_SCREEN_HEIGHT);
+		
+		
+		Platform_t newPlat;
+		newPlat.pos.x = x;
+		newPlat.pos.y = y;
+		newPlat.width = PLATFORM_WIDTH;
+		newPlat.height = PLATFORM_HEIGHT;
+		newPlat.type = NORMAL;
+		newPlat.colour = SKY_BLUE;
+		platforms[(int)i] = newPlat;
+	}
+	return total;
+}
 
 /*******************************************************************************
 User input functions
+*******************************************************************************/
+
+/*******************************************************************************
+handleTouch
+Handle the input on the touch panels and move the player. 
+inputs:
+- Player_t *player - A pointer to player.
+- SceTouchData touch[] - Touch data
+outputs:
+- none
 *******************************************************************************/
 void handleTouch(Player_t *player, SceTouchData touch[])
 {
@@ -366,15 +450,22 @@ void handleCollisionChecking(Player_t *player, Platform_t platArray[], int platf
 									  platArray[i].pos.x, platArray[i].pos.y, platArray[i].width, platArray[i].height);
 		if (onPlatform)
 		{
-			player->vel.y = -300; //Override any current velocity 
+			
+			player->vel.y = (player->vel.y > -300) ? -300: player->vel.y; //Override current velocity if it's less 
 			platArray[i].colour = CLEARED_GREEN;
-			char Out[256] = ""; 
-			sprintf(Out + strlen(Out),"Colliding with plat: %d", i);
-			drawText(pgf, 600, i*20, GREEN , 1.0f, Out);
 		}
 	}
 }
-
+/*******************************************************************************
+isOnPlatform
+Tests if given the players and platform coords that the the player is on the
+platform. Returns an int like boolean indicating if the player is on the platform
+inputs:
+- float playerX, float playerY, float playerWidth, float playerHeight
+- float platformX, float platformY, float platformWidth, float platformHeight
+outputs:
+- int - If the player is on the platform
+*******************************************************************************/
 int isOnPlatform(float playerX, float playerY, float playerWidth, float playerHeight, 
 				 float platformX, float platformY, float platformWidth, float platformHeight)
 {
@@ -390,7 +481,7 @@ int isOnPlatform(float playerX, float playerY, float playerWidth, float playerHe
 		//now it is above we need to check if it is landed on the platform
 		return testInRange(playerY + playerHeight, platformY - PLATFORM_LANDING_SENSITIVITY, platformY + platformHeight);
 	}
-	
+	return 0;
 }
 
 int testInRange(int numberToCheck, int bottom, int top)
@@ -399,8 +490,77 @@ int testInRange(int numberToCheck, int bottom, int top)
 }
 
 /*******************************************************************************
+platform Movement functions
+*******************************************************************************/
+/*******************************************************************************
+handlePlatformMovement
+Manages the platforms for each frame of the game. I.E. Move them down, delete
+when uneeded, add more when needed. 
+inputs:
+- Player_t player -
+- Platform_t platArray[] - 
+- int platformLength - 
+outputs:
+- int - the new length of platform array
+*******************************************************************************/
+int handlePlatformMovement(Player_t player, Platform_t platArray[], int platformLength)
+{
+	int i;
+	char Out[256] = "plats removed: "; 
+	//reverse loop as we are deleteing while looping.
+	for (i = platformLength - 1;i >= 0; i--)
+	{
+		if (platArray[i].pos.y > PSVITA_SCREEN_HEIGHT + 50)
+		{
+			platformLength = removePlatform(i, platArray, platformLength);			
+			sprintf(Out + strlen(Out), "%d\n", i);
+			continue;
+		}
+		
+		if (player.pos.y <= 150)
+		{
+			platArray[i].pos.y += 5;
+		}
+		else if (player.pos.y >= 400)
+		{
+			platArray[i].pos.y -= 5;
+		}
+	}
+	if (platformLength < 10)
+	{
+		platformLength = appendPlatforms(platArray, platformLength, 16);
+	}
+	drawText(pgf, 600, 100, GREEN , 1.0f, Out);
+	return platformLength;
+}
+
+/*******************************************************************************
+platform functions
+*******************************************************************************/
+/*******************************************************************************
+removePlatform
+Manages the platforms for each frame of the game. I.E. Move them down, delete
+when uneeded, add more when needed. 
+inputs:
+- int index - the index to remove
+- Platform_t platArray[] - the platform array
+- int platformLength - the length of the platform array
+outputs:
+- int - the new length of the platform array.
+*******************************************************************************/
+int removePlatform(int index, Platform_t platArray[], int platformLength)
+{
+	platArray[index] = platArray[platformLength-1];
+	return --platformLength;
+}
+/*******************************************************************************
 rendering functions
 *******************************************************************************/
+
+void drawPlayer(Player_t player)
+{
+	vita2d_draw_rectangle(player.pos.x, player.pos.y, player.width, player.height, player.colour);
+}
 
 void drawPlatforms(Platform_t platforms[], int platformLength)
 {

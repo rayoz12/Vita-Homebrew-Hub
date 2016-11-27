@@ -5,11 +5,11 @@ CC := arm-vita-eabi-gcc
 CXX := arm-vita-eabi-g++
 STRIP := arm-vita-eabi-strip
 
-PROJECT_TITLE := Doodle Jump
-PROJECT_TITLEID := VSDK15684
+PROJECT_TITLE := Timer
+PROJECT_TITLEID := VSDK65168
 PSVITAIP = "192.168.1.106"
 
-PROJECT := Doodle_Jump
+PROJECT := Timer
 CXXFLAGS += -std=c++11 -I../common -Wall
 CFLAGS += -I../common -Wall
 
